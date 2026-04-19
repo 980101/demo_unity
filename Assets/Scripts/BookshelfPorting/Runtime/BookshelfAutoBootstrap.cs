@@ -64,7 +64,7 @@ namespace BookshelfPorting.Runtime
             generator.Configure(state, materialFactory);
             interactionController.Configure(state, generator, cameraController, materialFactory, mainCamera, experienceManager);
             runtimeDataStore.Configure(state, materialFactory);
-            experienceManager.Configure(state, cameraController, interactionController, materialFactory, runtimeDataStore);
+            experienceManager.Configure(state, cameraController, interactionController, materialFactory, runtimeDataStore, generator);
             environment.Configure(probe, null);
 
             mainCamera.transform.position = overviewAnchor.position;

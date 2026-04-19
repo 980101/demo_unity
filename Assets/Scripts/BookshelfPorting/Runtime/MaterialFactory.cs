@@ -25,6 +25,7 @@ namespace BookshelfPorting.Runtime
         [SerializeField] private Color bookshelfTint = Color.white;
 
         private Material bookshelfWoodMaterial;
+        private Material furnitureWoodMaterial;
         private Material floorMaterial;
         private Material wallMaterial;
         private Material whiteboardFrameMaterial;
@@ -56,6 +57,16 @@ namespace BookshelfPorting.Runtime
             }
 
             return floorMaterial;
+        }
+
+        public Material GetFurnitureWoodMaterial()
+        {
+            if (furnitureWoodMaterial == null)
+            {
+                furnitureWoodMaterial = CreateLitMaterial("FurnitureWood", woodBaseMap, woodNormalMap, Color.white, bookshelfSmoothness, false);
+            }
+
+            return furnitureWoodMaterial;
         }
 
         public Material GetWallMaterial()
@@ -116,28 +127,16 @@ namespace BookshelfPorting.Runtime
             {
                 case BookshelfThemeStyle.Warm:
                     bookshelfTint = new Color(1f, 0.88f, 0.74f);
-                    wallColor = new Color(0.96f, 0.92f, 0.84f);
-                    whiteboardFrameColor = new Color(0.45f, 0.30f, 0.18f);
-                    whiteboardSurfaceColor = new Color(0.98f, 0.95f, 0.90f);
                     break;
                 case BookshelfThemeStyle.Dark:
                     bookshelfTint = new Color(0.36f, 0.30f, 0.26f);
-                    wallColor = new Color(0.78f, 0.76f, 0.72f);
-                    whiteboardFrameColor = new Color(0.18f, 0.16f, 0.15f);
-                    whiteboardSurfaceColor = new Color(0.90f, 0.90f, 0.88f);
                     break;
                 default:
                     bookshelfTint = Color.white;
-                    wallColor = new Color(0.93f, 0.90f, 0.84f);
-                    whiteboardFrameColor = new Color(0.34f, 0.26f, 0.18f);
-                    whiteboardSurfaceColor = new Color(0.96f, 0.97f, 0.95f);
                     break;
             }
 
             ApplyThemeToMaterial(bookshelfWoodMaterial, bookshelfTint, bookshelfSmoothness);
-            ApplyThemeToMaterial(wallMaterial, wallColor, 0.08f);
-            ApplyThemeToMaterial(whiteboardFrameMaterial, whiteboardFrameColor, 0.32f);
-            ApplyThemeToMaterial(whiteboardSurfaceMaterial, whiteboardSurfaceColor, 0.62f);
         }
 
         private static void ApplyThemeToMaterial(Material material, Color color, float smoothness)

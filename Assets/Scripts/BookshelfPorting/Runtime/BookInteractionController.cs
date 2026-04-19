@@ -74,7 +74,8 @@ namespace BookshelfPorting.Runtime
 
             if (backButton != null)
             {
-                backButton.gameObject.SetActive(state != null && state.IsViewingBook);
+                var useOverlayBackButton = experienceManager != null && experienceManager.CurrentFocusArea == ExperienceFocusArea.Bookshelf;
+                backButton.gameObject.SetActive(state != null && state.IsViewingBook && !useOverlayBackButton);
             }
 
             UpdateEditMarkers();
@@ -333,7 +334,10 @@ namespace BookshelfPorting.Runtime
 
         private bool CanInteractWithShelfBooks()
         {
-            return cameraController != null && cameraController.CurrentMode == CameraMode.Frontal;
+            return cameraController != null &&
+                   cameraController.CurrentMode == CameraMode.Frontal &&
+                   generator != null &&
+                   !generator.IsBookshelfSwitching;
         }
 
         private bool IsEditModeActive()

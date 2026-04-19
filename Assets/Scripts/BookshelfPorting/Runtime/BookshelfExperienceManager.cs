@@ -33,19 +33,21 @@ namespace BookshelfPorting.Runtime
         private static readonly Vector2 GuestbookFocusedNoteBaseSize = new(246f, 156f);
         private static readonly Vector2[] GuestbookPreviewOffsets =
         {
-            new Vector2(-292f, -214f),
-            new Vector2(-42f, -158f),
-            new Vector2(216f, -238f),
-            new Vector2(24f, -382f)
+            new Vector2(-336f, 154f),
+            new Vector2(286f, 126f),
+            new Vector2(-38f, 12f),
+            new Vector2(294f, -96f)
         };
-        private static readonly float[] GuestbookPreviewRotations = { -2.6f, 1.8f, -1.2f, 2.4f };
+        private static readonly float[] GuestbookPreviewRotations = { -3.4f, 2.2f, -1.6f, 3.1f };
+        private static readonly float[] GuestbookPreviewScales = { 1.02f, 0.99f, 1.03f, 0.98f };
         private static readonly string[] GuestbookPreviewMessages =
         {
-            "Leave a message",
-            "Your note here",
-            "Pin a memory",
-            "See you soon"
+            "Window light was perfect.",
+            "Hyunwoo stopped by at noon.",
+            "Return the blue poetry book.",
+            "Back next Friday."
         };
+        private static readonly string[] GuestbookPreviewCaptions = { "Minji", "Hyunwoo", "Seoyeon", "Host" };
         private static readonly Vector2[] GuestbookFocusedNoteAnchors =
         {
             new Vector2(-0.84f, 0.74f),
@@ -73,6 +75,7 @@ namespace BookshelfPorting.Runtime
         [SerializeField] private BookshelfState state = null;
         [SerializeField] private CameraController cameraController = null;
         [SerializeField] private BookInteractionController interactionController = null;
+        [SerializeField] private BookshelfGenerator bookshelfGenerator = null;
         [SerializeField] private MaterialFactory materialFactory = null;
         [SerializeField] private BookshelfRuntimeDataStore dataStore = null;
         [SerializeField] private bool isEditMode;
@@ -81,7 +84,23 @@ namespace BookshelfPorting.Runtime
         private Canvas hudCanvas;
         private Button editModeButton;
         private GameObject editModePanel;
+        private Text overlayModeText;
         private Text editSelectionText;
+        private Text overlayHintText;
+        private Button overlayEditModeButton;
+        private Button overlayPreviousFocusButton;
+        private Button overlayNextFocusButton;
+        private GameObject bookshelfToolbarPanel;
+        private Button spineOrientationButton;
+        private Button frontOrientationButton;
+        private Button angledOrientationButton;
+        private Button arrangePopupButton;
+        private GameObject arrangePopupPanel;
+        private Button[] arrangeOptionButtons = new Button[3];
+        private Text arrangePopupHintText;
+        private Button closeBookViewButton;
+        private GameObject editModeHintPanel;
+        private Text editModeHintText;
 
         private GameObject guestbookPanel;
         private GameObject guestbookPreviewPanel;
@@ -137,6 +156,7 @@ namespace BookshelfPorting.Runtime
         private GameObject hamburgerMenuPanel;
         private Button hamburgerButton;
         private bool isHamburgerMenuOpen;
+        private bool isArrangePopupOpen;
 
         public ExperienceFocusArea CurrentFocusArea { get; private set; } = ExperienceFocusArea.QuarterView;
         public bool IsEditMode => isEditMode;
@@ -149,7 +169,8 @@ namespace BookshelfPorting.Runtime
             CameraController controller,
             BookInteractionController interaction,
             MaterialFactory factory,
-            BookshelfRuntimeDataStore runtimeDataStore)
+            BookshelfRuntimeDataStore runtimeDataStore,
+            BookshelfGenerator generator)
         {
             if (cameraController != null)
             {
@@ -157,17 +178,31 @@ namespace BookshelfPorting.Runtime
                 cameraController.TransitionCompleted -= HandleCameraTransitionCompleted;
             }
 
+            if (bookshelfGenerator != null)
+            {
+                bookshelfGenerator.BookshelfSwitchStateChanged -= HandleBookshelfSwitchStateChanged;
+            }
+
             state = bookshelfState;
             cameraController = controller;
             interactionController = interaction;
+            bookshelfGenerator = generator;
             materialFactory = factory;
             dataStore = runtimeDataStore;
 
-            if (isActiveAndEnabled && cameraController != null)
+            if (isActiveAndEnabled)
             {
-                cameraController.ModeChanged += HandleCameraModeChanged;
-                cameraController.TransitionCompleted += HandleCameraTransitionCompleted;
-                SyncFromCameraMode(cameraController.CurrentMode);
+                if (cameraController != null)
+                {
+                    cameraController.ModeChanged += HandleCameraModeChanged;
+                    cameraController.TransitionCompleted += HandleCameraTransitionCompleted;
+                    SyncFromCameraMode(cameraController.CurrentMode);
+                }
+
+                if (bookshelfGenerator != null)
+                {
+                    bookshelfGenerator.BookshelfSwitchStateChanged += HandleBookshelfSwitchStateChanged;
+                }
             }
         }
 
@@ -179,6 +214,16 @@ namespace BookshelfPorting.Runtime
 
         private void Start()
         {
+            if (bookshelfGenerator == null)
+            {
+                bookshelfGenerator = FindFirstObjectByType<BookshelfGenerator>();
+                if (isActiveAndEnabled && bookshelfGenerator != null)
+                {
+                    bookshelfGenerator.BookshelfSwitchStateChanged -= HandleBookshelfSwitchStateChanged;
+                    bookshelfGenerator.BookshelfSwitchStateChanged += HandleBookshelfSwitchStateChanged;
+                }
+            }
+
             ConfigureNotebookScreen();
             EnsureGuestbookBoardUi();
             RefreshHud();
@@ -227,6 +272,11 @@ namespace BookshelfPorting.Runtime
                 cameraController.TransitionCompleted += HandleCameraTransitionCompleted;
                 SyncFromCameraMode(cameraController.CurrentMode);
             }
+
+            if (bookshelfGenerator != null)
+            {
+                bookshelfGenerator.BookshelfSwitchStateChanged += HandleBookshelfSwitchStateChanged;
+            }
         }
 
         private void OnDisable()
@@ -235,6 +285,11 @@ namespace BookshelfPorting.Runtime
             {
                 cameraController.ModeChanged -= HandleCameraModeChanged;
                 cameraController.TransitionCompleted -= HandleCameraTransitionCompleted;
+            }
+
+            if (bookshelfGenerator != null)
+            {
+                bookshelfGenerator.BookshelfSwitchStateChanged -= HandleBookshelfSwitchStateChanged;
             }
         }
 
@@ -354,17 +409,21 @@ namespace BookshelfPorting.Runtime
 
         private bool CanStartCameraFocus()
         {
-            return cameraController != null && !cameraController.IsTransitioning;
+            return cameraController != null &&
+                   !cameraController.IsTransitioning &&
+                   (bookshelfGenerator == null || !bookshelfGenerator.IsBookshelfSwitching);
         }
 
         public void ToggleEditMode()
         {
-            if (CurrentFocusArea != ExperienceFocusArea.Bookshelf)
+            if (CurrentFocusArea != ExperienceFocusArea.Bookshelf ||
+                (bookshelfGenerator != null && bookshelfGenerator.IsBookshelfSwitching))
             {
                 return;
             }
 
             isEditMode = !isEditMode;
+            isArrangePopupOpen = false;
 
             if (isEditMode)
             {
@@ -407,12 +466,15 @@ namespace BookshelfPorting.Runtime
             }
 
             materialFactory.ApplyTheme(theme);
+            isArrangePopupOpen = false;
             RefreshHud();
         }
 
         public void HandleBookViewed(BookEntity book)
         {
             ActiveDetailBook = book;
+            OpenBookDetailPanel(book);
+            RefreshHud();
         }
 
         public void ToggleFocusedBookDetail(BookEntity book)
@@ -429,6 +491,7 @@ namespace BookshelfPorting.Runtime
             }
 
             OpenBookDetailPanel(book);
+            RefreshHud();
         }
 
         public void HandleBookClosed()
@@ -438,6 +501,8 @@ namespace BookshelfPorting.Runtime
             {
                 bookDetailPanel.SetActive(false);
             }
+
+            RefreshHud();
         }
 
         public BookshelfRuntimeSnapshotData CreateRuntimeSnapshot()
@@ -458,6 +523,7 @@ namespace BookshelfPorting.Runtime
             ActiveDetailBook = book;
             bookDetailPanel.SetActive(true);
             RefreshBookDetailPanel();
+            RefreshHud();
         }
 
         private void CloseBookDetailPanel()
@@ -466,6 +532,8 @@ namespace BookshelfPorting.Runtime
             {
                 bookDetailPanel.SetActive(false);
             }
+
+            RefreshHud();
         }
 
         private void ToggleReadState()
@@ -483,6 +551,7 @@ namespace BookshelfPorting.Runtime
 
             meta.isRead = !meta.isRead;
             RefreshBookDetailPanel();
+            RefreshHud();
         }
 
         private void ToggleVisibilityState()
@@ -500,6 +569,7 @@ namespace BookshelfPorting.Runtime
 
             meta.isPublic = !meta.isPublic;
             RefreshBookDetailPanel();
+            RefreshHud();
         }
 
         private bool TryCloseBookDetailFromFocusedBookPointer()
@@ -601,6 +671,11 @@ namespace BookshelfPorting.Runtime
             }
         }
 
+        private void HandleBookshelfSwitchStateChanged()
+        {
+            RefreshHud();
+        }
+
         private void SyncFromCameraMode(CameraMode mode)
         {
             switch (mode)
@@ -627,6 +702,7 @@ namespace BookshelfPorting.Runtime
             if (CurrentFocusArea != ExperienceFocusArea.Bookshelf)
             {
                 SelectedEditBook = null;
+                isArrangePopupOpen = false;
             }
 
             if (CurrentFocusArea == ExperienceFocusArea.Notebook)
@@ -666,29 +742,101 @@ namespace BookshelfPorting.Runtime
 
             hamburgerButton = CreateButton(canvasObject.transform, "HamburgerButton", "Menu", new Vector2(-20f, -20f), ToggleHamburgerMenu, new Vector2(72f, 44f), new Vector2(1f, 1f));
             hamburgerButton.GetComponentInChildren<Text>().fontSize = 26;
+            StyleHudPanel(hamburgerButton.GetComponent<Image>(), new Color(0.08f, 0.09f, 0.11f, 0.78f));
 
             hamburgerMenuPanel = CreatePanel(canvasObject.transform, "HamburgerMenuPanel", new Vector2(-20f, -74f), new Vector2(190f, 204f), new Vector2(1f, 1f));
+            StyleHudPanel(hamburgerMenuPanel.GetComponent<Image>(), new Color(0.08f, 0.09f, 0.11f, 0.84f));
             CreateButton(hamburgerMenuPanel.transform, "QuarterViewButton", "Quarter View", new Vector2(-10f, -10f), () => RunMenuAction(FocusQuarterView));
             CreateButton(hamburgerMenuPanel.transform, "BookshelfButton", "Bookshelf", new Vector2(-10f, -58f), () => RunMenuAction(FocusBookshelf));
             CreateButton(hamburgerMenuPanel.transform, "GuestbookButton", "Guestbook", new Vector2(-10f, -106f), () => RunMenuAction(FocusGuestbook));
             editModeButton = CreateButton(hamburgerMenuPanel.transform, "EditModeButton", "Edit Mode: Off", new Vector2(-10f, -154f), () => RunMenuAction(ToggleEditMode));
 
-            editModePanel = CreatePanel(canvasObject.transform, "EditModePanel", new Vector2(-20f, -236f), new Vector2(260f, 210f), new Vector2(1f, 1f));
-            editSelectionText = CreateLabel(editModePanel.transform, "EditSelectionText", new Vector2(12f, -12f), new Vector2(236f, 48f), TextAnchor.UpperLeft);
-            editSelectionText.fontSize = 16;
-            themeButtons[0] = CreateButton(editModePanel.transform, "ThemeDefaultButton", "Theme: Default", new Vector2(-12f, -72f), () => ApplyTheme(BookshelfThemeStyle.Default));
-            themeButtons[1] = CreateButton(editModePanel.transform, "ThemeWarmButton", "Theme: Warm", new Vector2(-12f, -124f), () => ApplyTheme(BookshelfThemeStyle.Warm));
-            themeButtons[2] = CreateButton(editModePanel.transform, "ThemeDarkButton", "Theme: Dark", new Vector2(-12f, -176f), () => ApplyTheme(BookshelfThemeStyle.Dark));
+            editModePanel = CreatePanel(canvasObject.transform, "BookshelfStatusPanel", new Vector2(20f, -20f), new Vector2(372f, 110f), new Vector2(0f, 1f));
+            StyleHudPanel(editModePanel.GetComponent<Image>(), new Color(0.08f, 0.10f, 0.13f, 0.78f));
+            overlayModeText = CreateLabel(editModePanel.transform, "OverlayModeText", new Vector2(16f, -14f), new Vector2(140f, 18f), TextAnchor.UpperLeft);
+            overlayModeText.fontSize = 13;
+            overlayModeText.fontStyle = FontStyle.Bold;
+            overlayModeText.color = new Color32(255, 235, 204, 255);
+            editSelectionText = CreateLabel(editModePanel.transform, "EditSelectionText", new Vector2(16f, -36f), new Vector2(340f, 24f), TextAnchor.UpperLeft);
+            editSelectionText.fontSize = 18;
+            editSelectionText.fontStyle = FontStyle.Bold;
+            editSelectionText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            overlayHintText = CreateLabel(editModePanel.transform, "OverlayHintText", new Vector2(16f, -64f), new Vector2(340f, 34f), TextAnchor.UpperLeft);
+            overlayHintText.fontSize = 13;
+            overlayHintText.color = new Color32(219, 224, 229, 255);
+            overlayHintText.horizontalOverflow = HorizontalWrapMode.Wrap;
 
-            bookDetailPanel = CreatePanel(canvasObject.transform, "BookDetailPanel", new Vector2(20f, -20f), new Vector2(360f, 250f), new Vector2(0f, 1f));
+            overlayEditModeButton = CreateButton(canvasObject.transform, "OverlayEditModeButton", "Edit Mode", new Vector2(-20f, -20f), ToggleEditMode, new Vector2(132f, 44f), new Vector2(1f, 1f));
+            overlayPreviousFocusButton = CreateButton(canvasObject.transform, "OverlayPreviousFocusButton", "<", new Vector2(20f, 0f), ShowPreviousBookshelf, new Vector2(46f, 84f), new Vector2(0f, 0.5f));
+            overlayNextFocusButton = CreateButton(canvasObject.transform, "OverlayNextFocusButton", ">", new Vector2(-20f, 0f), ShowNextBookshelf, new Vector2(46f, 84f), new Vector2(1f, 0.5f));
+
+            bookshelfToolbarPanel = CreatePanel(canvasObject.transform, "BookshelfToolbarPanel", new Vector2(0f, 20f), new Vector2(872f, 84f), new Vector2(0.5f, 0f));
+            StyleHudPanel(bookshelfToolbarPanel.GetComponent<Image>(), new Color(0.08f, 0.10f, 0.13f, 0.74f));
+
+            var rotateHeader = CreateLabel(bookshelfToolbarPanel.transform, "RotateHeader", new Vector2(18f, -12f), new Vector2(64f, 16f), TextAnchor.UpperLeft);
+            rotateHeader.text = "Rotate";
+            rotateHeader.fontSize = 12;
+            rotateHeader.fontStyle = FontStyle.Bold;
+            rotateHeader.color = new Color32(255, 235, 204, 255);
+
+            spineOrientationButton = CreateButton(bookshelfToolbarPanel.transform, "SpineOrientationButton", "Spine", new Vector2(18f, 0f), () => ApplyOrientationFromUi(BookOrientation.Spine), new Vector2(92f, 38f), new Vector2(0f, 0.5f));
+            frontOrientationButton = CreateButton(bookshelfToolbarPanel.transform, "FrontOrientationButton", "Front", new Vector2(120f, 0f), () => ApplyOrientationFromUi(BookOrientation.Front), new Vector2(92f, 38f), new Vector2(0f, 0.5f));
+            angledOrientationButton = CreateButton(bookshelfToolbarPanel.transform, "AngledOrientationButton", "Angled45", new Vector2(222f, 0f), () => ApplyOrientationFromUi(BookOrientation.Angled45), new Vector2(108f, 38f), new Vector2(0f, 0.5f));
+
+            var arrangeHeader = CreateLabel(bookshelfToolbarPanel.transform, "ArrangeHeader", new Vector2(348f, -12f), new Vector2(70f, 16f), TextAnchor.UpperLeft);
+            arrangeHeader.text = "Arrange";
+            arrangeHeader.fontSize = 12;
+            arrangeHeader.fontStyle = FontStyle.Bold;
+            arrangeHeader.color = new Color32(255, 235, 204, 255);
+            arrangePopupButton = CreateButton(bookshelfToolbarPanel.transform, "ArrangePopupButton", "Arrange", new Vector2(348f, 0f), ToggleArrangePopup, new Vector2(90f, 38f), new Vector2(0f, 0.5f));
+
+            arrangePopupPanel = CreatePanel(bookshelfToolbarPanel.transform, "ArrangePopupPanel", new Vector2(346f, 88f), new Vector2(252f, 108f), new Vector2(0f, 0f));
+            StyleHudPanel(arrangePopupPanel.GetComponent<Image>(), new Color(0.08f, 0.10f, 0.13f, 0.90f));
+            arrangeOptionButtons[0] = CreateButton(arrangePopupPanel.transform, "ArrangeLeftButton", "Left", new Vector2(12f, -12f), null, new Vector2(68f, 32f), new Vector2(0f, 1f));
+            arrangeOptionButtons[1] = CreateButton(arrangePopupPanel.transform, "ArrangeCenterButton", "Center", new Vector2(88f, -12f), null, new Vector2(72f, 32f), new Vector2(0f, 1f));
+            arrangeOptionButtons[2] = CreateButton(arrangePopupPanel.transform, "ArrangeRightButton", "Right", new Vector2(168f, -12f), null, new Vector2(68f, 32f), new Vector2(0f, 1f));
+            arrangePopupHintText = CreateLabel(arrangePopupPanel.transform, "ArrangePopupHintText", new Vector2(12f, -56f), new Vector2(228f, 40f), TextAnchor.UpperLeft);
+            arrangePopupHintText.fontSize = 12;
+            arrangePopupHintText.color = new Color32(219, 224, 229, 255);
+            arrangePopupHintText.text = "Current shelf placement uses drag-and-drop with highlighted slots.";
+            arrangePopupHintText.horizontalOverflow = HorizontalWrapMode.Wrap;
+
+            var themeHeader = CreateLabel(bookshelfToolbarPanel.transform, "ThemeHeader", new Vector2(458f, -12f), new Vector2(64f, 16f), TextAnchor.UpperLeft);
+            themeHeader.text = "Theme";
+            themeHeader.fontSize = 12;
+            themeHeader.fontStyle = FontStyle.Bold;
+            themeHeader.color = new Color32(255, 235, 204, 255);
+            themeButtons[0] = CreateButton(bookshelfToolbarPanel.transform, "ThemeDefaultButton", "Default", new Vector2(458f, 0f), () => ApplyTheme(BookshelfThemeStyle.Default), new Vector2(82f, 38f), new Vector2(0f, 0.5f));
+            themeButtons[1] = CreateButton(bookshelfToolbarPanel.transform, "ThemeWarmButton", "Warm", new Vector2(550f, 0f), () => ApplyTheme(BookshelfThemeStyle.Warm), new Vector2(74f, 38f), new Vector2(0f, 0.5f));
+            themeButtons[2] = CreateButton(bookshelfToolbarPanel.transform, "ThemeDarkButton", "Dark", new Vector2(634f, 0f), () => ApplyTheme(BookshelfThemeStyle.Dark), new Vector2(74f, 38f), new Vector2(0f, 0.5f));
+
+            var viewHeader = CreateLabel(bookshelfToolbarPanel.transform, "ViewHeader", new Vector2(728f, -12f), new Vector2(54f, 16f), TextAnchor.UpperLeft);
+            viewHeader.text = "View";
+            viewHeader.fontSize = 12;
+            viewHeader.fontStyle = FontStyle.Bold;
+            viewHeader.color = new Color32(255, 235, 204, 255);
+            closeBookViewButton = CreateButton(bookshelfToolbarPanel.transform, "CloseBookViewButton", "Back", new Vector2(728f, 0f), CloseViewedBookFromUi, new Vector2(108f, 38f), new Vector2(0f, 0.5f));
+
+            editModeHintPanel = CreatePanel(canvasObject.transform, "EditModeHintPanel", new Vector2(0f, 112f), new Vector2(420f, 34f), new Vector2(0.5f, 0f));
+            StyleHudPanel(editModeHintPanel.GetComponent<Image>(), new Color(0.09f, 0.11f, 0.14f, 0.72f));
+            editModeHintText = CreateLabel(editModeHintPanel.transform, "EditModeHintText", Vector2.zero, new Vector2(400f, 22f), TextAnchor.MiddleCenter);
+            editModeHintText.fontSize = 13;
+            editModeHintText.fontStyle = FontStyle.Bold;
+            editModeHintText.text = "Drag books to move them. Available sections will be highlighted.";
+
+            bookDetailPanel = CreatePanel(canvasObject.transform, "BookDetailPanel", new Vector2(-20f, -76f), new Vector2(332f, 238f), new Vector2(1f, 1f));
+            StyleHudPanel(bookDetailPanel.GetComponent<Image>(), new Color(0.08f, 0.10f, 0.13f, 0.84f));
             bookDetailPanel.SetActive(false);
-            bookTitleText = CreateLabel(bookDetailPanel.transform, "BookTitleText", new Vector2(16f, -16f), new Vector2(320f, 28f), TextAnchor.UpperLeft);
+            bookTitleText = CreateLabel(bookDetailPanel.transform, "BookTitleText", new Vector2(16f, -16f), new Vector2(296f, 28f), TextAnchor.UpperLeft);
             bookTitleText.fontSize = 20;
-            bookMetaText = CreateLabel(bookDetailPanel.transform, "BookMetaText", new Vector2(16f, -56f), new Vector2(320f, 96f), TextAnchor.UpperLeft);
-            bookMetaText.fontSize = 15;
-            readToggleButton = CreateButton(bookDetailPanel.transform, "ReadToggleButton", "Read", new Vector2(-16f, -166f), ToggleReadState);
-            visibilityToggleButton = CreateButton(bookDetailPanel.transform, "VisibilityToggleButton", "Visibility", new Vector2(-16f, -214f), ToggleVisibilityState);
-            CreateButton(bookDetailPanel.transform, "CloseBookDetailButton", "Close", new Vector2(-196f, -214f), CloseBookDetailPanel, new Vector2(120f, 36f), new Vector2(1f, 1f));
+            bookTitleText.fontStyle = FontStyle.Bold;
+            bookTitleText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            bookMetaText = CreateLabel(bookDetailPanel.transform, "BookMetaText", new Vector2(16f, -54f), new Vector2(296f, 102f), TextAnchor.UpperLeft);
+            bookMetaText.fontSize = 14;
+            bookMetaText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            readToggleButton = CreateButton(bookDetailPanel.transform, "ReadToggleButton", "Mark Read", new Vector2(16f, -168f), ToggleReadState, new Vector2(138f, 36f), new Vector2(0f, 1f));
+            visibilityToggleButton = CreateButton(bookDetailPanel.transform, "VisibilityToggleButton", "Public", new Vector2(170f, -168f), ToggleVisibilityState, new Vector2(142f, 36f), new Vector2(0f, 1f));
+            CreateButton(bookDetailPanel.transform, "CloseBookDetailButton", "Close", new Vector2(16f, -212f), CloseBookDetailPanel, new Vector2(296f, 34f), new Vector2(0f, 1f));
 
             guestbookPanel = null;
 
@@ -710,14 +858,16 @@ namespace BookshelfPorting.Runtime
 
         private void RefreshHud()
         {
+            var isBookshelfFocused = CurrentFocusArea == ExperienceFocusArea.Bookshelf;
+
             if (hamburgerMenuPanel != null)
             {
-                hamburgerMenuPanel.SetActive(isHamburgerMenuOpen);
+                hamburgerMenuPanel.SetActive(isHamburgerMenuOpen && !isBookshelfFocused);
             }
 
             if (hamburgerButton != null)
             {
-                hamburgerButton.gameObject.SetActive(CurrentFocusArea != ExperienceFocusArea.Notebook);
+                hamburgerButton.gameObject.SetActive(CurrentFocusArea != ExperienceFocusArea.Notebook && !isBookshelfFocused);
             }
 
             if (editModeButton != null)
@@ -728,19 +878,309 @@ namespace BookshelfPorting.Runtime
 
             if (editModePanel != null)
             {
-                editModePanel.SetActive(isEditMode && CurrentFocusArea == ExperienceFocusArea.Bookshelf);
+                editModePanel.SetActive(isBookshelfFocused);
+            }
+
+            RefreshBookshelfOverlay();
+            RefreshThemeButtons();
+            RefreshGuestbookPanel();
+            RefreshBookDetailPanel();
+        }
+
+        private void RefreshBookshelfOverlay()
+        {
+            var isBookshelfFocused = CurrentFocusArea == ExperienceFocusArea.Bookshelf;
+            var isBookshelfSwitching = bookshelfGenerator != null && bookshelfGenerator.IsBookshelfSwitching;
+            var canSwitchBookshelf = !isBookshelfSwitching && bookshelfGenerator != null && bookshelfGenerator.BookshelfCount > 1;
+            if (!isBookshelfFocused)
+            {
+                isArrangePopupOpen = false;
+            }
+
+            if (overlayEditModeButton != null)
+            {
+                overlayEditModeButton.gameObject.SetActive(isBookshelfFocused);
+                overlayEditModeButton.interactable = isBookshelfFocused && !isBookshelfSwitching;
+                var editLabel = isEditMode ? "Edit Mode On" : "Edit Mode Off";
+                SetButtonLabel(overlayEditModeButton, editLabel);
+                StyleHudButton(
+                    overlayEditModeButton,
+                    isEditMode ? new Color32(173, 122, 79, 255) : new Color32(255, 255, 255, 235),
+                    isEditMode ? new Color32(151, 104, 64, 255) : new Color32(241, 235, 230, 255),
+                    new Color32(224, 219, 214, 255),
+                    16,
+                    isEditMode ? Color.white : new Color32(45, 50, 58, 255),
+                    true);
+            }
+
+            if (overlayPreviousFocusButton != null)
+            {
+                overlayPreviousFocusButton.gameObject.SetActive(isBookshelfFocused);
+                overlayPreviousFocusButton.interactable = canSwitchBookshelf;
+                StyleHudButton(
+                    overlayPreviousFocusButton,
+                    new Color32(255, 255, 255, 216),
+                    new Color32(241, 235, 230, 255),
+                    new Color32(224, 219, 214, 255),
+                    28,
+                    new Color32(45, 50, 58, 255),
+                    true);
+            }
+
+            if (overlayNextFocusButton != null)
+            {
+                overlayNextFocusButton.gameObject.SetActive(isBookshelfFocused);
+                overlayNextFocusButton.interactable = canSwitchBookshelf;
+                StyleHudButton(
+                    overlayNextFocusButton,
+                    new Color32(255, 255, 255, 216),
+                    new Color32(241, 235, 230, 255),
+                    new Color32(224, 219, 214, 255),
+                    28,
+                    new Color32(45, 50, 58, 255),
+                    true);
+            }
+
+            if (bookshelfToolbarPanel != null)
+            {
+                bookshelfToolbarPanel.SetActive(isBookshelfFocused);
+            }
+
+            if (arrangePopupPanel != null)
+            {
+                arrangePopupPanel.SetActive(isBookshelfFocused && isArrangePopupOpen && !isBookshelfSwitching);
+            }
+
+            if (editModeHintPanel != null)
+            {
+                editModeHintPanel.SetActive(isBookshelfFocused && isEditMode);
+            }
+
+            if (!isBookshelfFocused)
+            {
+                return;
+            }
+
+            var contextBook = GetBookshelfContextBook();
+            var isViewingBook = state != null && state.IsViewingBook;
+            var selectedTitle = TryGetBookDisplayTitle(contextBook);
+
+            if (overlayModeText != null)
+            {
+                overlayModeText.text = isEditMode ? "Current Mode: Edit Mode" : "Current Mode: View Mode";
             }
 
             if (editSelectionText != null)
             {
-                editSelectionText.text = SelectedEditBook == null
-                    ? "Edit Mode\nSelect a book, then drag it or click a highlighted slot."
-                    : $"Edit Mode\nSelected: {SelectedEditBook.bookId}";
+                var selectionPrefix = isViewingBook ? "Active Book" : isEditMode ? "Selected Book" : "Book";
+                editSelectionText.text = string.IsNullOrWhiteSpace(selectedTitle)
+                    ? "No book selected"
+                    : $"{selectionPrefix}: {selectedTitle}";
             }
 
-            RefreshThemeButtons();
-            RefreshGuestbookPanel();
-            RefreshBookDetailPanel();
+            if (overlayHintText != null)
+            {
+                overlayHintText.text = isBookshelfSwitching
+                    ? "Shelf is changing. Wait for the next shelf to settle."
+                    : isEditMode
+                    ? "Drag a selected book to move it. Available sections will highlight."
+                    : isViewingBook
+                        ? "Click the active book for details. Use the toolbar to rotate or close the view."
+                        : "Click a book to inspect it. Turn on Edit Mode to move books.";
+            }
+
+            var canRotateBook = contextBook != null && !isBookshelfSwitching;
+            UpdateOrientationButton(spineOrientationButton, "Spine", canRotateBook, contextBook != null && contextBook.orientation == BookOrientation.Spine);
+            UpdateOrientationButton(frontOrientationButton, "Front", canRotateBook, contextBook != null && contextBook.orientation == BookOrientation.Front);
+            UpdateOrientationButton(angledOrientationButton, "Angled45", canRotateBook, contextBook != null && contextBook.orientation == BookOrientation.Angled45);
+
+            if (arrangePopupButton != null)
+            {
+                arrangePopupButton.gameObject.SetActive(true);
+                arrangePopupButton.interactable = !isBookshelfSwitching;
+                StyleHudButton(
+                    arrangePopupButton,
+                    new Color32(255, 255, 255, 235),
+                    new Color32(241, 235, 230, 255),
+                    new Color32(224, 219, 214, 255),
+                    15,
+                    new Color32(45, 50, 58, 255));
+            }
+
+            for (var i = 0; i < arrangeOptionButtons.Length; i++)
+            {
+                if (arrangeOptionButtons[i] == null)
+                {
+                    continue;
+                }
+
+                arrangeOptionButtons[i].interactable = false;
+                StyleHudButton(
+                    arrangeOptionButtons[i],
+                    new Color32(224, 226, 230, 255),
+                    new Color32(224, 226, 230, 255),
+                    new Color32(224, 226, 230, 255),
+                    13,
+                    new Color32(118, 126, 135, 255));
+            }
+
+            if (closeBookViewButton != null)
+            {
+                closeBookViewButton.interactable = isViewingBook;
+                StyleHudButton(
+                    closeBookViewButton,
+                    isViewingBook ? new Color32(173, 122, 79, 255) : new Color32(255, 255, 255, 235),
+                    isViewingBook ? new Color32(151, 104, 64, 255) : new Color32(241, 235, 230, 255),
+                    new Color32(224, 219, 214, 255),
+                    15,
+                    isViewingBook ? Color.white : new Color32(45, 50, 58, 255),
+                    isViewingBook);
+            }
+        }
+
+        private void UpdateOrientationButton(Button button, string label, bool isInteractable, bool isSelected)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.interactable = isInteractable;
+            SetButtonLabel(button, label);
+            StyleHudButton(
+                button,
+                isSelected ? new Color32(173, 122, 79, 255) : new Color32(255, 255, 255, 235),
+                isSelected ? new Color32(151, 104, 64, 255) : new Color32(241, 235, 230, 255),
+                new Color32(224, 219, 214, 255),
+                15,
+                isSelected ? Color.white : new Color32(45, 50, 58, 255),
+                isSelected);
+        }
+
+        private BookEntity GetBookshelfContextBook()
+        {
+            if (state != null && state.ActiveViewedBook != null)
+            {
+                return state.ActiveViewedBook;
+            }
+
+            if (SelectedEditBook != null)
+            {
+                return SelectedEditBook;
+            }
+
+            return ActiveDetailBook;
+        }
+
+        private string TryGetBookDisplayTitle(BookEntity book)
+        {
+            if (book == null)
+            {
+                return string.Empty;
+            }
+
+            var meta = dataStore != null ? dataStore.GetOrCreateBookMeta(book) : null;
+            if (meta != null && !string.IsNullOrWhiteSpace(meta.title))
+            {
+                return meta.title;
+            }
+
+            return string.IsNullOrWhiteSpace(book.bookId) ? "Untitled Book" : book.bookId;
+        }
+
+        private void ApplyOrientationFromUi(BookOrientation orientation)
+        {
+            if (interactionController == null ||
+                state == null ||
+                (bookshelfGenerator != null && bookshelfGenerator.IsBookshelfSwitching))
+            {
+                return;
+            }
+
+            var target = GetBookshelfContextBook();
+            if (target == null)
+            {
+                return;
+            }
+
+            state.ChangeBookOrientation(target, orientation, interactionController);
+            isArrangePopupOpen = false;
+            RefreshHud();
+        }
+
+        private void ShowPreviousBookshelf()
+        {
+            SwitchBookshelf(-1);
+        }
+
+        private void ShowNextBookshelf()
+        {
+            SwitchBookshelf(1);
+        }
+
+        private void SwitchBookshelf(int direction)
+        {
+            if (direction == 0 ||
+                CurrentFocusArea != ExperienceFocusArea.Bookshelf ||
+                bookshelfGenerator == null ||
+                bookshelfGenerator.IsBookshelfSwitching)
+            {
+                return;
+            }
+
+            if (state != null && state.ActiveDraggedBook != null)
+            {
+                return;
+            }
+
+            if (interactionController != null &&
+                state != null &&
+                state.IsViewingBook)
+            {
+                interactionController.CloseViewedBook(true);
+            }
+
+            ActiveDetailBook = null;
+            SelectedEditBook = null;
+            isArrangePopupOpen = false;
+
+            if (bookDetailPanel != null)
+            {
+                bookDetailPanel.SetActive(false);
+            }
+
+            var switched = direction > 0
+                ? bookshelfGenerator.ShowNextBookshelf()
+                : bookshelfGenerator.ShowPreviousBookshelf();
+
+            if (switched)
+            {
+                RefreshHud();
+            }
+        }
+
+        private void CloseViewedBookFromUi()
+        {
+            if (interactionController == null || state == null || !state.IsViewingBook)
+            {
+                return;
+            }
+
+            interactionController.CloseViewedBook(true);
+            isArrangePopupOpen = false;
+            RefreshHud();
+        }
+
+        private void ToggleArrangePopup()
+        {
+            if (CurrentFocusArea != ExperienceFocusArea.Bookshelf ||
+                (bookshelfGenerator != null && bookshelfGenerator.IsBookshelfSwitching))
+            {
+                return;
+            }
+
+            isArrangePopupOpen = !isArrangePopupOpen;
+            RefreshHud();
         }
 
         private void RefreshBookDetailPanel()
@@ -756,14 +1196,31 @@ namespace BookshelfPorting.Runtime
                 return;
             }
 
-            bookTitleText.text = meta.title;
+            bookTitleText.text = TryGetBookDisplayTitle(ActiveDetailBook);
             bookMetaText.text =
-                $"Status: {(meta.isRead ? "Read" : "Unread")}\n" +
-                $"Visibility: {(meta.isPublic ? "Public" : "Private")}\n\n" +
-                $"Memo\n{meta.memoPreview}";
+                $"Reading Status\n{(meta.isRead ? "Read" : "Unread")}\n\n" +
+                $"Visibility\n{(meta.isPublic ? "Public" : "Private")}\n\n" +
+                $"Memo Preview\n{meta.memoPreview}";
 
-            readToggleButton.GetComponentInChildren<Text>().text = meta.isRead ? "Mark Unread" : "Mark Read";
-            visibilityToggleButton.GetComponentInChildren<Text>().text = meta.isPublic ? "Set Private" : "Set Public";
+            SetButtonLabel(readToggleButton, meta.isRead ? "Mark Unread" : "Mark Read");
+            StyleHudButton(
+                readToggleButton,
+                meta.isRead ? new Color32(173, 122, 79, 255) : new Color32(255, 255, 255, 235),
+                meta.isRead ? new Color32(151, 104, 64, 255) : new Color32(241, 235, 230, 255),
+                new Color32(224, 219, 214, 255),
+                14,
+                meta.isRead ? Color.white : new Color32(45, 50, 58, 255),
+                meta.isRead);
+
+            SetButtonLabel(visibilityToggleButton, meta.isPublic ? "Public" : "Private");
+            StyleHudButton(
+                visibilityToggleButton,
+                meta.isPublic ? new Color32(88, 133, 117, 255) : new Color32(255, 255, 255, 235),
+                meta.isPublic ? new Color32(72, 114, 100, 255) : new Color32(241, 235, 230, 255),
+                new Color32(224, 219, 214, 255),
+                14,
+                meta.isPublic ? Color.white : new Color32(45, 50, 58, 255),
+                meta.isPublic);
         }
 
         private void EnsureGuestbookBoardUi()
@@ -1115,7 +1572,7 @@ namespace BookshelfPorting.Runtime
                 noteRect.pivot = new Vector2(0.5f, 0.5f);
                 noteRect.anchoredPosition = GuestbookPreviewOffsets[i];
                 noteRect.localRotation = Quaternion.Euler(0f, 0f, GuestbookPreviewRotations[i]);
-                noteRect.localScale = Vector3.one;
+                noteRect.localScale = Vector3.one * GuestbookPreviewScales[i];
                 StyleGuestbookCard(noteCard);
 
                 var cardImage = noteCard.GetComponent<Image>();
@@ -1143,7 +1600,7 @@ namespace BookshelfPorting.Runtime
                     13,
                     new Color32(138, 125, 118, 255),
                     TextAnchor.MiddleLeft);
-                captionText.text = "Guestbook";
+                captionText.text = GuestbookPreviewCaptions[i];
                 captionText.raycastTarget = false;
             }
         }
@@ -1976,6 +2433,37 @@ namespace BookshelfPorting.Runtime
             shadow.useGraphicAlpha = true;
         }
 
+        private static void StyleHudPanel(Image image, Color background)
+        {
+            if (image == null)
+            {
+                return;
+            }
+
+            ApplyRoundedSprite(image);
+            image.color = background;
+            AddSoftShadow(image.gameObject, new Color(0f, 0f, 0f, 0.12f), new Vector2(0f, -5f));
+        }
+
+        private static void StyleHudButton(Button button, Color background, Color highlightedBackground, Color disabledBackground, int fontSize, Color textColor, bool isBold = false)
+        {
+            StyleGuestbookActionButton(button, background, highlightedBackground, disabledBackground, fontSize, textColor, isBold);
+        }
+
+        private static void SetButtonLabel(Button button, string label)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            var text = button.GetComponentInChildren<Text>();
+            if (text != null)
+            {
+                text.text = label;
+            }
+        }
+
         private void RefreshThemeButtons()
         {
             if (materialFactory == null)
@@ -1983,9 +2471,9 @@ namespace BookshelfPorting.Runtime
                 return;
             }
 
-            UpdateThemeButton(themeButtons[0], materialFactory.CurrentTheme == BookshelfThemeStyle.Default);
-            UpdateThemeButton(themeButtons[1], materialFactory.CurrentTheme == BookshelfThemeStyle.Warm);
-            UpdateThemeButton(themeButtons[2], materialFactory.CurrentTheme == BookshelfThemeStyle.Dark);
+            UpdateThemeButton(themeButtons[0], materialFactory.CurrentTheme == BookshelfThemeStyle.Default, "Default");
+            UpdateThemeButton(themeButtons[1], materialFactory.CurrentTheme == BookshelfThemeStyle.Warm, "Warm");
+            UpdateThemeButton(themeButtons[2], materialFactory.CurrentTheme == BookshelfThemeStyle.Dark, "Dark");
         }
 
         private void CloseOverlayPanels(GameObject except = null)
@@ -2098,16 +2586,22 @@ namespace BookshelfPorting.Runtime
             return inputField;
         }
 
-        private static void UpdateThemeButton(Button button, bool isSelected)
+        private static void UpdateThemeButton(Button button, bool isSelected, string label)
         {
             if (button == null)
             {
                 return;
             }
 
-            button.GetComponent<Image>().color = isSelected
-                ? new Color(0.72f, 0.52f, 0.24f, 0.92f)
-                : new Color(0.11f, 0.12f, 0.14f, 0.86f);
+            SetButtonLabel(button, label);
+            StyleHudButton(
+                button,
+                isSelected ? new Color32(173, 122, 79, 255) : new Color32(255, 255, 255, 235),
+                isSelected ? new Color32(151, 104, 64, 255) : new Color32(241, 235, 230, 255),
+                new Color32(224, 219, 214, 255),
+                14,
+                isSelected ? Color.white : new Color32(45, 50, 58, 255),
+                isSelected);
         }
 
         private static Button CreateButton(Transform parent, string name, string label, Vector2 anchoredPosition, UnityEngine.Events.UnityAction onClick)
@@ -2125,7 +2619,10 @@ namespace BookshelfPorting.Runtime
 
             var button = buttonObject.AddComponent<Button>();
             button.targetGraphic = image;
-            button.onClick.AddListener(onClick);
+            if (onClick != null)
+            {
+                button.onClick.AddListener(onClick);
+            }
 
             var rect = buttonObject.GetComponent<RectTransform>();
             rect.anchorMin = anchor;

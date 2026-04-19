@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -5,6 +6,9 @@ namespace BookshelfPorting.Runtime
 {
     public class BookshelfGenerator : MonoBehaviour
     {
+        private const int BookshelfVariantCount = 3;
+        private const float BookshelfAnchorZ = 1.285f;
+        private const float BookshelfFadeDuration = 0.22f;
         private const string HamhamAssetPath = "Assets/Meshy_AI_Hamham_0416082404_texture.glb";
         private const string QABooksBaseTexturePath = "Assets/QA_Books/Textures/BooksA_bc.tga";
         private const string QABooksNormalTexturePath = "Assets/QA_Books/Textures/BooksA_n.tga";
@@ -46,11 +50,18 @@ namespace BookshelfPorting.Runtime
         [SerializeField] private int randomSeed = 7;
 
         private readonly List<GameObject> generatedGeometry = new List<GameObject>();
+        private readonly List<ShelfSection> bookshelfSections = new List<ShelfSection>();
         private readonly List<GameObject> qaBookPrefabs = new List<GameObject>();
         private Material qaBooksMaterial;
         private Material qaBooksAltMaterial;
+        private Coroutine bookshelfSwitchCoroutine;
+        private int activeBookshelfIndex;
 
         public Transform BooksRoot => booksRoot;
+        public bool IsBookshelfSwitching => bookshelfSwitchCoroutine != null;
+        public int BookshelfCount => BookshelfVariantCount;
+        public int ActiveBookshelfIndex => activeBookshelfIndex;
+        public event System.Action BookshelfSwitchStateChanged;
 
         public void Configure(BookshelfState bookshelfState, MaterialFactory factory)
         {
@@ -95,6 +106,12 @@ namespace BookshelfPorting.Runtime
 
         private void ClearGenerated()
         {
+            if (bookshelfSwitchCoroutine != null)
+            {
+                StopCoroutine(bookshelfSwitchCoroutine);
+                bookshelfSwitchCoroutine = null;
+            }
+
             for (var i = generatedGeometry.Count - 1; i >= 0; i--)
             {
                 if (generatedGeometry[i] != null)
@@ -104,6 +121,8 @@ namespace BookshelfPorting.Runtime
             }
 
             generatedGeometry.Clear();
+            bookshelfSections.Clear();
+            activeBookshelfIndex = 0;
 
             var bookChildren = new List<GameObject>();
             for (var i = 0; i < booksRoot.childCount; i++)
@@ -130,7 +149,8 @@ namespace BookshelfPorting.Runtime
 
         private void BuildBookshelf()
         {
-            bookshelfRoot.localPosition = new Vector3(0f, 0f, 1.285f);
+            bookshelfRoot.localPosition = new Vector3(0f, 0f, BookshelfAnchorZ);
+            bookshelfRoot.localRotation = Quaternion.identity;
             var wood = materialFactory.GetBookshelfWoodMaterial();
 
             CreateBox("LeftPanel", bookshelfRoot, new Vector3(-width * 0.5f + boardThickness * 0.5f, height * 0.5f, 0f), new Vector3(boardThickness, height, depth), wood);
@@ -156,7 +176,7 @@ namespace BookshelfPorting.Runtime
                 CreateBox($"Divider_{column}", bookshelfRoot, new Vector3(x, height * 0.5f, 0f), new Vector3(dividerThickness, height - boardThickness * 2f, depth), wood);
             }
 
-            var sections = new List<ShelfSection>();
+            bookshelfSections.Clear();
             for (var row = 0; row < rows; row++)
             {
                 var bottomY = boardThickness + row * (sectionHeight + boardThickness);
@@ -165,19 +185,26 @@ namespace BookshelfPorting.Runtime
                 {
                     var left = -usableWidth * 0.5f + column * (sectionWidth + dividerThickness);
                     var right = left + sectionWidth;
-                    sections.Add(new ShelfSection(row, column, left, right, bottomY, topY - bottomY, booksForwardZ));
+                    bookshelfSections.Add(new ShelfSection(row, column, left, right, bottomY, topY - bottomY, booksForwardZ));
                 }
             }
 
-            state.ResetSections(sections);
-            SpawnBooks(sections);
-            state.LayoutAll(state, false);
+            state.ResetSections(bookshelfSections);
+            PopulateBookshelfVariant(activeBookshelfIndex);
+            SetBookshelfAlpha(1f);
             BuildHamhamDisplay();
         }
 
-        private void SpawnBooks(List<ShelfSection> sections)
+        private void PopulateBookshelfVariant(int variantIndex)
         {
-            Random.InitState(randomSeed);
+            ClearBookshelfBooks();
+            SpawnBooks(bookshelfSections, variantIndex);
+            state.LayoutAll(state, false);
+        }
+
+        private void SpawnBooks(List<ShelfSection> sections, int variantIndex)
+        {
+            Random.InitState(randomSeed + variantIndex * 137);
             var prefabs = GetQaBookPrefabs();
 
             for (var i = 0; i < sections.Count; i++)
@@ -188,12 +215,12 @@ namespace BookshelfPorting.Runtime
                     BookEntity book;
                     if (prefabs.Count > 0)
                     {
-                        var prefabIndex = (i * booksPerSection + j) % prefabs.Count;
-                        book = CreatePrefabBook(prefabs[prefabIndex], i, j);
+                        var prefabIndex = (variantIndex * 11 + i * booksPerSection + j) % prefabs.Count;
+                        book = CreatePrefabBook(prefabs[prefabIndex], variantIndex, i, j);
                     }
                     else
                     {
-                        book = CreateProceduralBook(i, j);
+                        book = CreateProceduralBook(variantIndex, i, j);
                     }
 
                     state.AddBookToSection(book, section);
@@ -201,11 +228,10 @@ namespace BookshelfPorting.Runtime
             }
         }
 
-        private BookEntity CreateProceduralBook(int sectionIndex, int bookIndex)
+        private BookEntity CreateProceduralBook(int variantIndex, int sectionIndex, int bookIndex)
         {
             var bookObject = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            generatedGeometry.Add(bookObject);
-            bookObject.name = $"Book_{sectionIndex}_{bookIndex}";
+            bookObject.name = $"Shelf{variantIndex}_Book_{sectionIndex}_{bookIndex}";
             bookObject.transform.SetParent(booksRoot, false);
 
             var thickness = Random.Range(thicknessRange.x, thicknessRange.y);
@@ -327,9 +353,9 @@ namespace BookshelfPorting.Runtime
             return qaBookPrefabs;
         }
 
-        private BookEntity CreatePrefabBook(GameObject prefab, int sectionIndex, int bookIndex)
+        private BookEntity CreatePrefabBook(GameObject prefab, int variantIndex, int sectionIndex, int bookIndex)
         {
-            var root = new GameObject($"{prefab.name}_{sectionIndex}_{bookIndex}");
+            var root = new GameObject($"Shelf{variantIndex}_{prefab.name}_{sectionIndex}_{bookIndex}");
             root.transform.SetParent(booksRoot, false);
 
             var visual = Instantiate(prefab, root.transform);
@@ -493,6 +519,198 @@ namespace BookshelfPorting.Runtime
             modelRoot.localPosition -= new Vector3(0f, minLocal.y, 0f);
         }
 
+        public bool ShowPreviousBookshelf()
+        {
+            return BeginBookshelfSwitch(-1);
+        }
+
+        public bool ShowNextBookshelf()
+        {
+            return BeginBookshelfSwitch(1);
+        }
+
+        private bool BeginBookshelfSwitch(int direction)
+        {
+            if (direction == 0 ||
+                IsBookshelfSwitching ||
+                booksRoot == null ||
+                bookshelfSections.Count == 0 ||
+                BookshelfVariantCount <= 1)
+            {
+                return false;
+            }
+
+            var targetIndex = GetWrappedBookshelfIndex(activeBookshelfIndex + direction);
+            if (targetIndex == activeBookshelfIndex)
+            {
+                return false;
+            }
+
+            bookshelfSwitchCoroutine = StartCoroutine(AnimateBookshelfSwitch(targetIndex));
+            BookshelfSwitchStateChanged?.Invoke();
+            return true;
+        }
+
+        private IEnumerator AnimateBookshelfSwitch(int targetIndex)
+        {
+            yield return AnimateBookshelfFade(1f, 0f);
+
+            ClearBookshelfBooks();
+            yield return null;
+
+            activeBookshelfIndex = targetIndex;
+            PopulateBookshelfVariant(activeBookshelfIndex);
+            SetBookshelfAlpha(0f);
+
+            yield return AnimateBookshelfFade(0f, 1f);
+
+            bookshelfSwitchCoroutine = null;
+            BookshelfSwitchStateChanged?.Invoke();
+        }
+
+        private IEnumerator AnimateBookshelfFade(float startAlpha, float endAlpha)
+        {
+            var elapsed = 0f;
+
+            while (elapsed < BookshelfFadeDuration)
+            {
+                elapsed += Time.deltaTime;
+                var t = Mathf.SmoothStep(0f, 1f, elapsed / BookshelfFadeDuration);
+                SetBookshelfAlpha(Mathf.Lerp(startAlpha, endAlpha, t));
+                yield return null;
+            }
+
+            SetBookshelfAlpha(endAlpha);
+        }
+
+        private void ClearBookshelfBooks()
+        {
+            if (state != null)
+            {
+                for (var i = 0; i < state.Sections.Count; i++)
+                {
+                    state.Sections[i].books.Clear();
+                }
+            }
+
+            var bookChildren = new List<GameObject>();
+            for (var i = 0; i < booksRoot.childCount; i++)
+            {
+                bookChildren.Add(booksRoot.GetChild(i).gameObject);
+            }
+
+            for (var i = 0; i < bookChildren.Count; i++)
+            {
+                DestroySpawnedObject(bookChildren[i]);
+            }
+        }
+
+        private static void DestroySpawnedObject(GameObject target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Object.Destroy(target);
+            }
+            else
+            {
+                Object.DestroyImmediate(target);
+            }
+        }
+
+        private static int GetWrappedBookshelfIndex(int index)
+        {
+            var wrapped = index % BookshelfVariantCount;
+            return wrapped < 0 ? wrapped + BookshelfVariantCount : wrapped;
+        }
+
+        private void SetBookshelfAlpha(float alpha)
+        {
+            if (bookshelfRoot == null)
+            {
+                return;
+            }
+
+            var renderers = bookshelfRoot.GetComponentsInChildren<Renderer>(true);
+            var processedMaterials = new HashSet<Material>();
+
+            for (var i = 0; i < renderers.Length; i++)
+            {
+                var renderer = renderers[i];
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                var materials = renderer.sharedMaterials;
+                for (var j = 0; j < materials.Length; j++)
+                {
+                    var material = materials[j];
+                    if (material == null ||
+                        material == materialFactory.GetGhostPreviewMaterial() ||
+                        !processedMaterials.Add(material))
+                    {
+                        continue;
+                    }
+
+                    if (alpha < 0.999f)
+                    {
+                        ConfigureMaterialForFade(material);
+                    }
+                    else
+                    {
+                        RestoreMaterialFromFade(material);
+                    }
+
+                    var color = material.HasProperty("_BaseColor")
+                        ? material.GetColor("_BaseColor")
+                        : material.color;
+                    color.a = alpha < 0.999f ? alpha : 1f;
+
+                    if (material.HasProperty("_BaseColor"))
+                    {
+                        material.SetColor("_BaseColor", color);
+                    }
+
+                    material.color = color;
+                }
+            }
+        }
+
+        private static void ConfigureMaterialForFade(Material material)
+        {
+            if (material == null)
+            {
+                return;
+            }
+
+            material.SetFloat("_Surface", 1f);
+            material.SetFloat("_Blend", 0f);
+            material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            material.SetFloat("_ZWrite", 0f);
+            material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        private static void RestoreMaterialFromFade(Material material)
+        {
+            if (material == null)
+            {
+                return;
+            }
+
+            material.SetFloat("_Surface", 0f);
+            material.SetFloat("_Blend", 0f);
+            material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.Zero);
+            material.SetFloat("_ZWrite", 1f);
+            material.renderQueue = -1;
+        }
+
         private void BuildGuestbookBoard()
         {
             var guestbook = new GameObject("GuestbookBoard");
@@ -525,7 +743,7 @@ namespace BookshelfPorting.Runtime
             notebookStation.transform.localRotation = Quaternion.identity;
             generatedGeometry.Add(notebookStation);
 
-            var wood = materialFactory.GetBookshelfWoodMaterial();
+            var wood = materialFactory.GetFurnitureWoodMaterial();
             var aluminum = materialFactory.CreateBookMaterial(new Color(0.72f, 0.73f, 0.71f));
             var darkGlass = materialFactory.CreateBookMaterial(new Color(0.015f, 0.018f, 0.022f));
             var screenGlow = materialFactory.CreateBookMaterial(new Color(0.10f, 0.16f, 0.24f));
